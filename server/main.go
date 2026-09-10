@@ -1,14 +1,20 @@
 package main
 
-import "github.com/gin-gonic/gin"
+import (
+  
+	"github.com/gin-gonic/gin"
+  )
 
 func main() {
   router := gin.Default()
 
   //Get
   router.GET("/student", func(c *gin.Context) {
+	studentId := c.Query("studentId")
+
     c.JSON(200, gin.H{
-      "message": "get student complete!",
+    "studentId": studentId,
+	"fullname": "Jon Doe",
     })
   })
 
