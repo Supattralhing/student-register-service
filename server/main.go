@@ -1,9 +1,14 @@
 package main
 
 import (
-  
+	"fmt"
 	"github.com/gin-gonic/gin"
+	"net/http"
   )
+
+type Studentinfo struct{
+	Fullname string `json:"fullname"`
+}
 
 func main() {
   router := gin.Default()
@@ -20,9 +25,13 @@ func main() {
 
   //Post
   router.POST("/student", func(c *gin.Context) {
-    c.JSON(200, gin.H{
-      "message": "create student complete!",
-    })
+	var body Studentinfo
+
+	if err := c.ShouldBindJSON(&body); err != nil{
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+      	return
+	}
+    c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Register successfully %s", body.Fullname)})
   })
 
   router.Run() // listens on 0.0.0.0:8080 by default
