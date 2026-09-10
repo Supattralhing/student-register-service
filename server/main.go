@@ -1,39 +1,48 @@
 package main
 
 import (
-	"fmt"
-	"github.com/gin-gonic/gin"
 	"net/http"
-  )
 
-type Studentinfo struct{
+	"github.com/gin-gonic/gin"
+)
+
+type Studentinfo struct {
 	Fullname string `json:"fullname"`
 }
 
 func main() {
-  router := gin.Default()
+	router := gin.Default()
 
-  //Get
-  router.GET("/student", func(c *gin.Context) {
-	studentId := c.Query("studentId")
+	// Serve the page from Go, so the browser sees the page and the API as one origin.
+	// Path is relative to where you run the program: cd server && go run .
+	router.StaticFile("/", "../web-app/index.html")
 
-    c.JSON(200, gin.H{
-    "studentId": studentId,
-	"fullname": "Jon Doe",
-    })
-  })
+	//Get
+	router.GET("/student", func(c *gin.Context) {
+		studentId := c.Query("studentId")
 
-  //Post
-  router.POST("/student", func(c *gin.Context) {
-	var body Studentinfo
+		c.JSON(200, gin.H{
+			"studentId": studentId,
+			"name":      "Jon Doe",
+			"email":     "sample@mail.com",
+		})
+	})
 
-	if err := c.ShouldBindJSON(&body); err != nil{
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-      	return
-	}
-    c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Register successfully %s", body.Fullname)})
-  })
+	//Post
+	router.POST("/student", func(c *gin.Context) {
+		var body Studentinfo
 
-  router.Run() // listens on 0.0.0.0:8080 by default
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"studentId": "1234",
+			"name":      "Jon Doe",
+			"email":     "sample@mail.com",
+		})
+	})
+
+	router.Run() // listens on 0.0.0.0:8080 by default
 
 }

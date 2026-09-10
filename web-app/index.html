@@ -160,7 +160,7 @@
       </section>
 
       <noscript><p class="status setup-notice" data-tone="error">Please enable JavaScript in your browser to register and find students.</p></noscript>
-      <p id="setup-notice" class="status setup-notice" data-tone="info" hidden>To connect to your student records, start the Go server and open <a href="http://127.0.0.1:8080/">http://127.0.0.1:8080/</a>. Opening this HTML file directly will not connect to the API.</p>
+      <p id="setup-notice" class="status setup-notice" data-tone="info" hidden>This page was opened from a file, so it calls the API at <a href="http://127.0.0.1:8080/student">http://127.0.0.1:8080</a> directly. Start the Go server first. Your browser may still block the reply because the page and the API are on different origins.</p>
 
       <div class="workspace">
         <section class="panel" aria-labelledby="register-title">
@@ -275,6 +275,9 @@
       const registerStatus = document.querySelector("#register-status");
       const lookupStatus = document.querySelector("#lookup-status");
       const lookupInput = document.querySelector("#lookup-id");
+      // Empty when the Go server serves this page: /student is then already the right address.
+      // Opened straight from a file, the requests need the server's full address.
+      const API_BASE = location.protocol === "file:" ? "http://127.0.0.1:8080" : "";
       const studentCard = document.querySelector("#student-card");
       const emptyState = document.querySelector("#empty-state");
       let lookupVersion = 0;
@@ -327,15 +330,11 @@
 
       // fetch sends HTTP requests, just like clicking Send in Postman.
       async function requestStudent(path, options = {}) {
-        if (location.protocol === "file:") {
-          throw new Error("Open http://127.0.0.1:8080/ after starting the Go server to use this form.");
-        }
-
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
         const isRegistration = options.method === "POST";
         try {
-          const response = await fetch(path, {
+          const response = await fetch(API_BASE + path, {
             ...options,
             headers: { Accept: "application/json", ...options.headers },
             cache: "no-store",
