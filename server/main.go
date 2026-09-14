@@ -1,48 +1,117 @@
 package main
 
 import (
-	"net/http"
-
+	"database/sql"
+	"errors"
+	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"log"
+	"net/http"
+	"strings"
 )
 
-type Studentinfo struct {
-	Fullname string `json:"fullname"`
+type StudentResponse struct {
+	StudentID string `json:"studentId"`
+	Name      string `json:"name"`
+	Email     string `json:"email"`
+}
+
+type ErrorResponse struct {
+	Message string `json:"message"`
+}
+
+type CreateStudentRequest struct {
+	StudentID string `json:"studentId" binding:"required"`
+	Name      string `json:"name" binding:"required"`
+	Email     string `json:"email" binding:"required"`
 }
 
 func main() {
-	router := gin.Default()
+	//Connect DB
+	db, err := sql.Open("pgx", "postgres://student_user:student_password@127.0.0.1:5434/student_register?sslmode=disable&connect_timeout=5")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
 
-	// Serve the page from Go, so the browser sees the page and the API as one origin.
-	// Path is relative to where you run the program: cd server && go run .
+	if err := db.Ping(); err != nil {
+		log.Fatal("Could not connect to the database: ", err)
+	}
+
+	fmt.Println("Connected to the student database")
+
+	router := gin.Default()
 	router.StaticFile("/", "../web-app/index.html")
 
 	//Get
 	router.GET("/student", func(c *gin.Context) {
-		studentId := c.Query("studentId")
+		studentID := strings.TrimSpace(c.Query("studentId"))
+		if studentID == "" {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Message: "studentId is required"})
+			return
+		}
 
-		c.JSON(200, gin.H{
-			"studentId": studentId,
-			"name":      "Jon Doe",
-			"email":     "sample@mail.com",
-		})
+		var student StudentResponse
+		err := db.QueryRowContext(c.Request.Context(),
+			"SELECT student_id, name, email FROM student WHERE student_id = $1",
+			studentID,
+		).Scan(&student.StudentID, &student.Name, &student.Email)
+
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, ErrorResponse{Message: "Student not found"})
+			return
+		}
+		if err != nil {
+			log.Println("Could not read student:", err)
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not read student"})
+			return
+		}
+		c.JSON(http.StatusOK, student)
 	})
 
 	//Post
 	router.POST("/student", func(c *gin.Context) {
-		var body Studentinfo
-
-		if err := c.ShouldBindJSON(&body); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		var request CreateStudentRequest
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Message: "Send studentId, name, and email as nonempty JSON text fields"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{
-			"studentId": "1234",
-			"name":      "Jon Doe",
-			"email":     "sample@mail.com",
-		})
+
+		request.StudentID = strings.TrimSpace(request.StudentID)
+		request.Name = strings.TrimSpace(request.Name)
+		request.Email = strings.TrimSpace(request.Email)
+		if request.StudentID == "" || request.Name == "" || request.Email == "" {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Message: "studentId, name, and email are required"})
+			return
+		}
+
+		var student StudentResponse
+		err := db.QueryRowContext(c.Request.Context(),
+			`INSERT INTO student (student_id, name, email)
+       VALUES ($1, $2, $3)
+       RETURNING student_id, name, email`,
+			request.StudentID, request.Name, request.Email,
+		).Scan(&student.StudentID, &student.Name, &student.Email)
+
+		if err != nil {
+			var pgError *pgconn.PgError
+			if errors.As(err, &pgError) && pgError.Code == "23505" {
+				c.JSON(http.StatusConflict, ErrorResponse{Message: "A student with this ID already exists"})
+				return
+			}
+			log.Println("Could not save student:", err)
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not save student"})
+			return
+		}
+
+		c.JSON(http.StatusCreated, student)
 	})
 
-	router.Run() // listens on 0.0.0.0:8080 by default
+	if err := router.Run("127.0.0.1:8080"); err != nil {
+		log.Println("Could not start API:", err)
+	}
 
+	router.Run() // listens on 0.0.0.0:8080 by default
 }
