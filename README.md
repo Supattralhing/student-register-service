@@ -1,56 +1,42 @@
 # Student register: learning Go through a real task
 
-Imagine you work at a school's front desk. You need to find a student's details and register a new student. These lessons make your Go API do those jobs using a database.
+Imagine you work at a school's front desk. Each week the office asks for one more thing, and you build it. By the end you are doing what a junior backend engineer does: changing a database that already holds records, keeping two tables in step, and proving your work still runs without clicking through it by hand.
 
-Start with [lesson 6: set up the database](docs/06-start-the-database.md).
-
-| Lesson | What you will be able to do | Suggested time |
+| Week | The office asks for | Lessons |
 | --- | --- | --- |
-| [6. Start the database](docs/06-start-the-database.md) | Start PostgreSQL with a student table and two sample students. | 30–45 minutes |
-| [7. Explore with DBeaver](docs/07-explore-with-dbeaver.md) | Open the table, find a student, and read a small SQL instruction. | 30–45 minutes |
-| [8. Find a student through Go](docs/08-find-a-student.md) | Make `GET /student?studentId=0231` return a saved student. | Two 30–45 minute sessions |
-| [9. Register a student through Go](docs/09-register-a-student.md) | Make `POST /student` save a student and return the saved details. | 45–60 minutes |
+| [Week 01 — a register that remembers](docs/week01/README.md) | "Find a student, and register a new one." | 6–9 |
+| [Week 02 — from a friends list to a friends table](docs/week02/README.md) | "Who are this student's friends? And when did they become friends?" | 10–15 |
 
-These are suggested session lengths. Continue when the learner can explain the result in their own words.
+Start at [week 01, lesson 6](docs/week01/06-start-the-database.md).
+
+## What is in this project
+
+```text
+student-register-service/
+├── compose.yaml               PostgreSQL in Docker
+├── database/
+│   ├── init/                  runs only on an empty database — the starting point
+│   └── migrations/            the changes made after that — see its README
+├── docs/
+│   ├── week01/                lessons 6–9, plus the answer sheet
+│   └── week02/                lessons 10–15, answer sheets, and the page handouts
+├── server/                    the learner's Go code, one codebase all the way through
+└── web-app/                   the page the API serves
+```
+
+`server/` is never copied or forked between weeks. It is one codebase that grows, exactly like a real project: week 02 edits code week 01 finished, and deletes some of it.
 
 ## Before teaching
 
-Steps 1–5 are assumed to have introduced GET, POST, Postman, query strings, and reading JSON into a Go struct. In this checkout, `server/main.go` only prints `hello`; the earlier HTTP examples are not present. The worked examples use **Gin**, an assumed choice based on the earlier JSON-binding lesson. If your earlier code uses another library, the database and SQL lessons still apply, but the HTTP code will need adapting.
+Have Docker Desktop running, DBeaver Community installed, Postman available, and Go working. Downloading software can be a separate preparation session. `server/go.mod` requests Go `1.26.7`; run `go version` **inside `server`** before teaching and allow any toolchain download to finish.
 
-Lesson 8 includes a complete GET example so this checkout has a usable starting point. Lesson 9 builds on it. The finished [reference file](docs/reference/main.go.txt) is an answer sheet for the teacher. Read each small section with the learner before using the complete answer.
+The examples use `studentId`, `name`, and `email`. All names and addresses are fictional, and the database login is a public practice value for a database on your own computer.
 
-Have Docker Desktop running, DBeaver Community installed, Postman available, and Go working before the lesson. Downloading software can be a separate preparation session. This project's `server/go.mod` requests Go `1.26.7`; run `go version` **inside `server`** before teaching and allow any required toolchain download to finish.
-
-The examples use three fields: `studentId`, `name`, and `email`. If your earlier lessons use different fields, agree on one set before starting. All names and addresses here are fictional. The connection details are public practice values for a database on this computer.
-
-## Use the registration page
-
-[web-app/index.html](web-app/index.html) contains a registration form and a student ID lookup. It uses the lesson API directly, sending `POST /student` to register and `GET /student?studentId=...` to find a record. Student IDs stay as text, including any starting zeros.
-
-After completing lessons 8–9, start the database with `docker compose up -d --wait` from the project's top folder. In another terminal, run `go run .` from **server**, then open **http://127.0.0.1:8080/** in your browser. Keep both the database and Go server running. For example, find sample student `0231`, or register `0233` and find that ID afterward.
-
-The lesson and reference code include this line just after `router := gin.Default()`:
-
-```go
-router.StaticFile("/", "../web-app/index.html")
-```
-
-If you are using your own Gin API, add that line to your existing router and restart Go from **server**. Open the address above instead of double-clicking the HTML file: Go serves the page and API from the same address, so the browser can use both without additional cross-origin settings. This checkout's original `server/main.go` is still the learner's starting point; the working API is built in the lessons, with the complete answer in [docs/reference/main.go.txt](docs/reference/main.go.txt).
-
-## The picture to keep in mind
-
-```mermaid
-flowchart LR
-    P[Postman: send a request] -->|HTTP, port 8080| G[Go API: follow the instructions]
-    G -->|SQL, port 5434| D[(PostgreSQL: keep student records)]
-    B[DBeaver: view the records] -->|SQL, port 5434| D
-```
-
-The reply travels back along the same path. PostgreSQL runs inside Docker. Go, Postman, and DBeaver run on your computer. DBeaver and the Go API access the same database independently; the API can work while DBeaver is closed.
+Each week's README has its own "before teaching" notes. Read them.
 
 ## How to run each lesson
 
-Use the same cycle: **predict → try → observe → explain**.
+Use the same cycle every time: **predict → try → observe → explain**.
 
 1. Describe one school-office task in everyday language.
 2. Ask the learner what they expect to happen.
@@ -58,10 +44,28 @@ Use the same cycle: **predict → try → observe → explain**.
 4. Compare what happened with their prediction.
 5. Ask them to explain it without reading the code aloud.
 
-For example: “If I close Postman, will the saved student disappear? How could we check?” Let the learner test the answer.
+Several lessons ask the learner to predict something and then be wrong on purpose. Those are the ones to slow down for, not skip.
 
 Introduce words when they become useful. A **database** keeps records; a **table** is like one spreadsheet sheet; a **row** holds one student; a **column** holds one kind of information. **SQL** is the language used to ask the database to read or change records.
 
-For the first pass, focus on the path from request to saved record. The teacher can supply the connection setup and error-handling code, then explain those lines gradually. Keep the Go code in one file for these lessons.
+## Running everything
 
-Finish by having the learner register a fictional student, find that student in Postman and DBeaver, and explain why the record survives restarting the API.
+From the project's top folder:
+
+```sh
+docker compose up -d --wait
+```
+
+Then, in another terminal:
+
+```sh
+cd server
+go run .
+```
+
+Open **http://127.0.0.1:8080/**. From week 02, lesson 15 onwards:
+
+```sh
+cd server
+go test ./...
+```

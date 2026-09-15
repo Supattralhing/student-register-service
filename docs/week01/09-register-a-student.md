@@ -188,3 +188,5 @@ Optional teacher demonstration: keep Go running, run `docker compose stop` from 
 **Ready to finish:** Register another fictional student using an unused ID. Find the student in both apps. Explain which part reads the form, which part saves it, and why it survives restarting Go.
 
 Teacher's final prompt: “A colleague says the POST response proves the student was saved. What extra check would you show them?”
+
+Next: [week 02, lesson 10: give every student a friends list](../week02/10-give-students-a-friends-list.md).

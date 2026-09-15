@@ -1,0 +1,154 @@
+package main
+
+import (
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	_ "github.com/jackc/pgx/v5/stdlib"
+)
+
+// ---------------------------------------------------------------------------
+// A unit test. It checks one small function on its own. No database, no HTTP.
+// The table lists a case per line: give it this, expect that.
+// ---------------------------------------------------------------------------
+
+func TestValidateFriendPair(t *testing.T) {
+	cases := []struct {
+		name      string
+		studentID string
+		friendID  string
+		wantError bool
+	}{
+		{"two different students", "0231", "0232", false},
+		{"nobody is their own friend", "0231", "0231", true},
+		{"missing friend", "0231", "", true},
+		{"missing student", "", "0232", true},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := validateFriendPair(testCase.studentID, testCase.friendID)
+			if testCase.wantError && err == nil {
+				t.Errorf("expected a problem to be reported, got none")
+			}
+			if !testCase.wantError && err != nil {
+				t.Errorf("expected no problem, got: %v", err)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// An integration test. It uses the real database in Docker, exactly like
+// Postman does. Start the database before running it.
+// ---------------------------------------------------------------------------
+
+// Every student this test creates starts with test_, so we can find and remove
+// our own rows afterwards without touching anybody else's records.
+const testPrefix = "test_"
+
+func openTestDatabase(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("pgx", databaseURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Ping(); err != nil {
+		t.Skip("database is not running; start it with: docker compose up -d --wait")
+	}
+	// t.Cleanup runs when the test finishes, whether it passed or failed.
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM friendship WHERE student_id LIKE $1 OR friend_id LIKE $1", testPrefix+"%")
+		db.Exec("DELETE FROM student WHERE student_id LIKE $1", testPrefix+"%")
+		db.Close()
+	})
+	return db
+}
+
+func newTestRouter(store *Store) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/friends", handleListFriends(store))
+	router.POST("/friend", handleAddFriend(store))
+	return router
+}
+
+// call sends a request to the API without a browser or Postman.
+func call(router *gin.Engine, method, path, body string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func TestAddFriendIsVisibleFromBothSides(t *testing.T) {
+	db := openTestDatabase(t)
+	store := NewStore(db)
+	router := newTestRouter(store)
+
+	mali := testPrefix + "mali"
+	arun := testPrefix + "arun"
+	for id, name := range map[string]string{mali: "Test Mali", arun: "Test Arun"} {
+		if _, err := store.CreateStudent(t.Context(), id, name, id+"@example.com"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	response := call(router, http.MethodPost, "/friend", `{"studentId":"`+mali+`","friendId":"`+arun+`"}`)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("adding a friend: expected 201, got %d: %s", response.Code, response.Body)
+	}
+
+	// The point of the test: a friendship must be visible from both sides.
+	for _, pair := range [][2]string{{mali, arun}, {arun, mali}} {
+		response := call(router, http.MethodGet, "/friends?studentId="+pair[0], "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("listing friends of %s: expected 200, got %d", pair[0], response.Code)
+		}
+		var friends []FriendResponse
+		if err := json.Unmarshal(response.Body.Bytes(), &friends); err != nil {
+			t.Fatal(err)
+		}
+		if len(friends) != 1 || friends[0].StudentID != pair[1] {
+			t.Fatalf("friends of %s: expected only %s, got %+v", pair[0], pair[1], friends)
+		}
+		if friends[0].Since == nil {
+			t.Errorf("friends of %s: expected a start date on a new friendship", pair[0])
+		}
+	}
+}
+
+func TestFriendsOfAStudentWithNoFriends(t *testing.T) {
+	db := openTestDatabase(t)
+	store := NewStore(db)
+	router := newTestRouter(store)
+
+	lonely := testPrefix + "lonely"
+	if _, err := store.CreateStudent(t.Context(), lonely, "Test Lonely", "lonely@example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	response := call(router, http.MethodGet, "/friends?studentId="+lonely, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a student with no friends, got %d", response.Code)
+	}
+	if body := strings.TrimSpace(response.Body.String()); body != "[]" {
+		t.Errorf("expected an empty list, got %s", body)
+	}
+}
+
+func TestFriendsOfAStudentWhoDoesNotExist(t *testing.T) {
+	db := openTestDatabase(t)
+	router := newTestRouter(NewStore(db))
+
+	response := call(router, http.MethodGet, "/friends?studentId="+testPrefix+"nobody", "")
+	if response.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for a student who does not exist, got %d", response.Code)
+	}
+}

@@ -27,7 +27,7 @@ student-register-service/
     └── main.go
 ```
 
-Open [compose.yaml](../compose.yaml). Its main instructions mean:
+Open [compose.yaml](../../compose.yaml). Its main instructions mean:
 
 | Setting | Everyday meaning |
 | --- | --- |
@@ -45,7 +45,7 @@ This setup uses PostgreSQL 17 and its data folder `/var/lib/postgresql/data`. Ke
 
 ## 2. Read the student table setup
 
-Open [database/init/01-students.sql](../database/init/01-students.sql):
+Open [database/init/01-students.sql](../../database/init/01-students.sql):
 
 ```sql
 CREATE TABLE student (
