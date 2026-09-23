@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -28,6 +29,20 @@ type CreateStudentRequest struct {
 	Email     string `json:"email" binding:"required"`
 }
 
+type AddFriendRequest struct {
+	StudentID string `json:"studentId" binding:"required"`
+	FriendID  string `json:"friendId" binding:"required"`
+}
+
+func studentExists(ctx context.Context, db *sql.DB, studentID string) (bool, error) {
+	var exists bool
+	err := db.QueryRowContext(ctx,
+		"SELECT EXISTS (SELECT 1 FROM student WHERE student_id = $1)",
+		studentID,
+	).Scan(&exists)
+	return exists, err
+}
+
 func main() {
 	//Connect DB
 	db, err := sql.Open("pgx", "postgres://student_user:student_password@127.0.0.1:5434/student_register?sslmode=disable&connect_timeout=5")
@@ -45,7 +60,7 @@ func main() {
 	router := gin.Default()
 	router.StaticFile("/", "../web-app/index.html")
 
-	//Get
+	//Get Student
 	router.GET("/student", func(c *gin.Context) {
 		studentID := strings.TrimSpace(c.Query("studentId"))
 		if studentID == "" {
@@ -71,6 +86,59 @@ func main() {
 		c.JSON(http.StatusOK, student)
 	})
 
+	//GET Friend
+	router.GET("/friends", func(c *gin.Context) {
+		studentID := strings.TrimSpace(c.Query("studentId"))
+		if studentID == "" {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Message: "studentId is required"})
+			return
+		}
+
+		exists, err := studentExists(c.Request.Context(), db, studentID)
+		if err != nil {
+			log.Println("Could not check student:", err)
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not read friends"})
+			return
+		}
+		if !exists {
+			c.JSON(http.StatusNotFound, ErrorResponse{Message: "Student not found"})
+			return
+		}
+
+		rows, err := db.QueryContext(c.Request.Context(),
+			`SELECT friend.student_id, friend.name, friend.email
+         FROM student me
+         JOIN friend_group list ON list.group_id = me.friend_group_id
+         JOIN student friend ON friend.student_id = ANY (list.friends)
+         WHERE me.student_id = $1
+         ORDER BY friend.name`,
+			studentID,
+		)
+		if err != nil {
+			log.Println("Could not read friends:", err)
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not read friends"})
+			return
+		}
+		defer rows.Close()
+
+		friends := []StudentResponse{}
+		for rows.Next() {
+			var friend StudentResponse
+			if err := rows.Scan(&friend.StudentID, &friend.Name, &friend.Email); err != nil {
+				log.Println("Could not read friends:", err)
+				c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not read friends"})
+				return
+			}
+			friends = append(friends, friend)
+		}
+		if err := rows.Err(); err != nil {
+			log.Println("Could not read friends:", err)
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not read friends"})
+			return
+		}
+		c.JSON(http.StatusOK, friends)
+	})
+
 	//Post
 	router.POST("/student", func(c *gin.Context) {
 		var request CreateStudentRequest
@@ -87,12 +155,22 @@ func main() {
 			return
 		}
 
+		transaction, err := db.BeginTx(c.Request.Context(), nil)
+		if err != nil {
+			log.Println("Could not start saving:", err)
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not save student"})
+			return
+		}
+		defer transaction.Rollback()
+
+		groupID := "g-" + request.StudentID
+
 		var student StudentResponse
-		err := db.QueryRowContext(c.Request.Context(),
-			`INSERT INTO student (student_id, name, email)
-       VALUES ($1, $2, $3)
-       RETURNING student_id, name, email`,
-			request.StudentID, request.Name, request.Email,
+		err = transaction.QueryRowContext(c.Request.Context(),
+			`INSERT INTO student (student_id, name, email, friend_group_id)
+       		VALUES ($1, $2, $3, $4)
+       		RETURNING student_id, name, email`,
+			request.StudentID, request.Name, request.Email, groupID,
 		).Scan(&student.StudentID, &student.Name, &student.Email)
 
 		if err != nil {
@@ -106,7 +184,83 @@ func main() {
 			return
 		}
 
+		if _, err := transaction.ExecContext(c.Request.Context(),
+			"INSERT INTO friend_group (group_id) VALUES ($1)", groupID); err != nil {
+			log.Println("Could not create the friends list:", err)
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not save student"})
+			return
+		}
+
+		if err := transaction.Commit(); err != nil {
+			log.Println("Could not finish saving:", err)
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not save student"})
+			return
+		}
+
 		c.JSON(http.StatusCreated, student)
+	})
+	//POST /friend
+	router.POST("/friend", func(c *gin.Context) {
+		var request AddFriendRequest
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Message: "Send studentId and friendId as nonempty JSON text fields"})
+			return
+		}
+
+		studentID := strings.TrimSpace(request.StudentID)
+		friendID := strings.TrimSpace(request.FriendID)
+		if studentID == "" || friendID == "" {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Message: "studentId and friendId are required"})
+			return
+		}
+		if studentID == friendID {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Message: "A student cannot be their own friend"})
+			return
+		}
+
+		for _, id := range []string{studentID, friendID} {
+			exists, err := studentExists(c.Request.Context(), db, id)
+			if err != nil {
+				log.Println("Could not check student:", err)
+				c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not save the friendship"})
+				return
+			}
+			if !exists {
+				c.JSON(http.StatusNotFound, ErrorResponse{Message: "Student " + id + " is not registered"})
+				return
+			}
+		}
+
+		transaction, err := db.BeginTx(c.Request.Context(), nil)
+		if err != nil {
+			log.Println("Could not start saving:", err)
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not save the friendship"})
+			return
+		}
+		defer transaction.Rollback()
+
+		const addToOneList = `UPDATE friend_group
+                          SET friends = array_append(friends, $2)
+                          WHERE group_id = (SELECT friend_group_id FROM student WHERE student_id = $1)
+                            AND NOT ($2 = ANY (friends))`
+
+		if _, err := transaction.ExecContext(c.Request.Context(), addToOneList, studentID, friendID); err != nil {
+			log.Println("Could not save the friendship:", err)
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not save the friendship"})
+			return
+		}
+		if _, err := transaction.ExecContext(c.Request.Context(), addToOneList, friendID, studentID); err != nil {
+			log.Println("Could not save the friendship:", err)
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not save the friendship"})
+			return
+		}
+
+		if err := transaction.Commit(); err != nil {
+			log.Println("Could not finish saving:", err)
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not save the friendship"})
+			return
+		}
+		c.Status(http.StatusCreated)
 	})
 
 	if err := router.Run("127.0.0.1:8080"); err != nil {
