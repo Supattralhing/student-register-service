@@ -11,12 +11,20 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type StudentResponse struct {
 	StudentID string `json:"studentId"`
 	Name      string `json:"name"`
 	Email     string `json:"email"`
+}
+
+type FriendResponse struct {
+	StudentID string  `json:"studentId"`
+	Name      string  `json:"name"`
+	Email     string  `json:"email"`
+	Since     *string `json:"since"`
 }
 
 type ErrorResponse struct {
@@ -106,12 +114,11 @@ func main() {
 		}
 
 		rows, err := db.QueryContext(c.Request.Context(),
-			`SELECT friend.student_id, friend.name, friend.email
-         FROM student me
-         JOIN friend_group list ON list.group_id = me.friend_group_id
-         JOIN student friend ON friend.student_id = ANY (list.friends)
-         WHERE me.student_id = $1
-         ORDER BY friend.name`,
+			`SELECT s.student_id, s.name, s.email, f.since
+     		FROM friendship f
+     		JOIN student s ON s.student_id = f.friend_id
+    		WHERE f.student_id = $1
+     		ORDER BY s.name`,
 			studentID,
 		)
 		if err != nil {
@@ -121,13 +128,18 @@ func main() {
 		}
 		defer rows.Close()
 
-		friends := []StudentResponse{}
+		friends := []FriendResponse{}
 		for rows.Next() {
-			var friend StudentResponse
-			if err := rows.Scan(&friend.StudentID, &friend.Name, &friend.Email); err != nil {
+			var friend FriendResponse
+			var since sql.NullTime
+			if err := rows.Scan(&friend.StudentID, &friend.Name, &friend.Email, &since); err != nil {
 				log.Println("Could not read friends:", err)
 				c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not read friends"})
 				return
+			}
+			if since.Valid {
+				day := since.Time.Format("2006-01-02")
+				friend.Since = &day
 			}
 			friends = append(friends, friend)
 		}
@@ -163,14 +175,12 @@ func main() {
 		}
 		defer transaction.Rollback()
 
-		groupID := "g-" + request.StudentID
-
 		var student StudentResponse
 		err = transaction.QueryRowContext(c.Request.Context(),
-			`INSERT INTO student (student_id, name, email, friend_group_id)
-       		VALUES ($1, $2, $3, $4)
-       		RETURNING student_id, name, email`,
-			request.StudentID, request.Name, request.Email, groupID,
+			`INSERT INTO student (student_id, name, email)
+     		VALUES ($1, $2, $3)
+     		RETURNING student_id, name, email`,
+			request.StudentID, request.Name, request.Email,
 		).Scan(&student.StudentID, &student.Name, &student.Email)
 
 		if err != nil {
@@ -180,13 +190,6 @@ func main() {
 				return
 			}
 			log.Println("Could not save student:", err)
-			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not save student"})
-			return
-		}
-
-		if _, err := transaction.ExecContext(c.Request.Context(),
-			"INSERT INTO friend_group (group_id) VALUES ($1)", groupID); err != nil {
-			log.Println("Could not create the friends list:", err)
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not save student"})
 			return
 		}
@@ -239,17 +242,17 @@ func main() {
 		}
 		defer transaction.Rollback()
 
-		const addToOneList = `UPDATE friend_group
-                          SET friends = array_append(friends, $2)
-                          WHERE group_id = (SELECT friend_group_id FROM student WHERE student_id = $1)
-                            AND NOT ($2 = ANY (friends))`
+		today := time.Now().Format("2006-01-02")
+		const addOneDirection = `INSERT INTO friendship (student_id, friend_id, since)
+                         VALUES ($1, $2, $3)
+                         ON CONFLICT (student_id, friend_id) DO NOTHING`
 
-		if _, err := transaction.ExecContext(c.Request.Context(), addToOneList, studentID, friendID); err != nil {
+		if _, err := transaction.ExecContext(c.Request.Context(), addOneDirection, studentID, friendID, today); err != nil {
 			log.Println("Could not save the friendship:", err)
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not save the friendship"})
 			return
 		}
-		if _, err := transaction.ExecContext(c.Request.Context(), addToOneList, friendID, studentID); err != nil {
+		if _, err := transaction.ExecContext(c.Request.Context(), addOneDirection, friendID, studentID, today); err != nil {
 			log.Println("Could not save the friendship:", err)
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Message: "Could not save the friendship"})
 			return

@@ -103,6 +103,7 @@
       .friend-id { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
       .friends-empty { margin: 0 0 18px; padding: 17px 14px; border-radius: 10px; background: #f7f9f4; color: var(--muted); font-size: 12px; line-height: 1.6; text-align: center; }
       .friend-form label { margin-bottom: 9px; }
+      .friend-since { flex-basis: 100%; color: var(--muted); font-size: 11px; }
 
       @media (max-width: 760px) {
         .shell { width: min(540px, calc(100% - 36px)); }
@@ -478,7 +479,11 @@
           const id = document.createElement("span");
           id.className = "friend-id";
           id.textContent = friend.studentId;
-          item.append(name, id);
+          const since = document.createElement("span");
+          since.className = "friend-since";
+          // since is null when the friendship came from the old design in lesson 13.
+          since.textContent = friend.since ? "Friends since " + friend.since : "Start date not recorded";
+          item.append(name, id, since);
           friendsList.append(item);
         }
       }
